@@ -9,27 +9,51 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+const retryDelta = time.Millisecond * 50
+const loadRetries = 5
+
+type Options struct {
+
+	// Minimum amount of time between file updates in seconds.
+	Delta int
+
+	// Number of times to attempt loading a
+	// watched file if it initially fails.
+	FileReloads int
+}
+
 type File struct {
 	Data     []byte
 	MinDelta int
 }
 
-func load(path string) ([]byte, error) {
+func load(path string) (data []byte, err error) {
 
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
+	for i := 1; i <= loadRetries; i++ {
+
+		data, err = ioutil.ReadFile(path)
+
+		if err == nil && len(data) > 0 {
+			break
+		}
+
+		time.Sleep(retryDelta)
 	}
 
-	f, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, err
+	if err != nil || len(data) == 0 {
+		return nil, errors.New("watch: unable to load file")
 	}
 
-	return f, nil
+	return data, nil
 }
 
 func This(path string, delta int, callback func(f *File, err error)) {
+
+	path, err := filepath.Abs(path)
+	if err != nil {
+		callback(nil, err)
+		return
+	}
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -54,7 +78,7 @@ func This(path string, delta int, callback func(f *File, err error)) {
 		case event, ok := <-watcher.Events:
 
 			if !ok {
-				callback(nil, errors.New("watcher events channel closed"))
+				callback(nil, errors.New("watch: watcher events channel closed"))
 				return
 			}
 
@@ -82,7 +106,7 @@ func This(path string, delta int, callback func(f *File, err error)) {
 		case err, ok := <-watcher.Errors:
 
 			if !ok {
-				callback(nil, errors.New("watcher errors channel closed"))
+				callback(nil, errors.New("watch: watcher errors channel closed"))
 				return
 			}
 
